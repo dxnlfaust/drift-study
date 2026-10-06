@@ -30,10 +30,14 @@
   $$('[data-type-item]').forEach((el) => {
     const key = (el.dataset.key || '').trim().toUpperCase();
     if (!key || TYPES[key]) return;
-    TYPES[key] = { key, n: (el.dataset.n || '').trim(), name: txt(el, '[data-type-name]'), blurb: $('[data-type-blurb]', el),
+    TYPES[key] = { key, n: (el.dataset.n || '').trim(), name: txt(el, '[data-type-name]'), slug: txt(el, '[data-type-name]').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''), blurb: $('[data-type-blurb]', el),
       at: traitsOf(el), yellow: /yellow/i.test(el.dataset.colour || '') };
     ORDER.push(key);
   });
+
+  // a picture's Type attribute can hold the type's key (U), name (The Undertow) or slug (the-undertow)
+  const resolveType = (v) => { v = (v || '').trim(); const u = v.toUpperCase(); if (!v || TYPES[u]) return u;
+    return ORDER.find((x) => TYPES[x].slug === v.toLowerCase() || TYPES[x].name.toLowerCase() === v.toLowerCase()) || u; };
 
   const IMG = {}; let WARM = null, COOL = null;
   const points = (s) => Object.fromEntries(String(s || '').split(/[\s,]+/).filter(Boolean)
@@ -48,7 +52,7 @@
     else if (role.includes('cool')) { o.p = 'M'; o.points = points(el.dataset.points); COOL = id; }
     else if (role.includes('wild')) o.p = 'W';
     else {
-      o.p = (el.dataset.type || '').trim().toUpperCase();
+      o.p = resolveType(el.dataset.type);
       if (!TYPES[o.p]) { warn(`picture ${id} has no dream type; skipped`); return; }
     }
     IMG[id] = o;
