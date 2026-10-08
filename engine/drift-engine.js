@@ -1,4 +1,4 @@
-/* DRIFT engine for the Webflow site, v0.3.0 (Faust Earth for Untitled Group, Oct 2026).
+/* DRIFT engine for the Webflow site, v0.3.1 (Faust Earth for Untitled Group, Oct 2026).
 
    A port of Studio BRIKD's DRIFT tools by Ryan Ausden, reused with his OK:
    - DRIFT TYPE MOTION (lab.js): the master table, cut-aware tracking, the height deal, the sacred margin, wdthFor.
@@ -23,7 +23,7 @@
    Webflow runs no custom code in the Designer canvas: test on the published (staging) site. */
 (() => {
   if (window.DRIFT && window.DRIFT.version) return;
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   const NS = 'http://www.w3.org/2000/svg';
   const AX = { wght: [400, 900], wdth: [23, 252] };
   const CAP = 1467 / 2048, DESC = 434 / 2048, XH = 1062 / 2048, SPACE = 200 / 2048;
@@ -524,7 +524,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
       if (open) { last = document.activeElement; const f = menu.querySelector('a,button,[tabindex]'); if (f) f.focus({ preventScroll: true }); refit(); }
       else if (last && last.focus) last.focus({ preventScroll: true });
     };
-    toggles.forEach((t) => { t.setAttribute('aria-expanded', 'false'); asButton(t);
+    toggles.forEach((t) => { t.setAttribute('aria-expanded', 'false'); asButton(t); t.classList.add('drift-ready');
       t.addEventListener('click', (e) => { e.preventDefault(); set(!menu.classList.contains('is-open')); });
       t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); set(!menu.classList.contains('is-open')); } }); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && menu.classList.contains('is-open')) set(false); });
@@ -586,6 +586,8 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   }
   function refit() { if (!queued) { queued = true; requestAnimationFrame(renderAll); } }
   async function initAll(root) {
+    // a data-drift value that draws nothing (menu-toggle, or a typo) is shown at once rather than held hidden
+    root.querySelectorAll('[data-drift]').forEach((el) => { if (!KINDS[el.getAttribute('data-drift')]) el.classList.add('drift-ready'); });
     const els = [...root.querySelectorAll('[data-drift]')].filter((el) => KINDS[el.getAttribute('data-drift')] && !STATE.has(el));
     const seen = new Map();
     els.sort((a, b) => KINDS[a.getAttribute('data-drift')].order - KINDS[b.getAttribute('data-drift')].order);
