@@ -1,4 +1,4 @@
-/* DRIFT engine for the Webflow site, v0.1.0 (Faust Earth for Untitled Group, Oct 2026).
+/* DRIFT engine for the Webflow site, v0.2.0 (Faust Earth for Untitled Group, Oct 2026).
 
    A port of Studio BRIKD's DRIFT tools by Ryan Ausden, reused with his OK:
    - DRIFT TYPE MOTION (lab.js): the master table, cut-aware tracking, the height deal, the sacred margin, wdthFor.
@@ -17,12 +17,13 @@
      data-drift="sticker"  a bumper sticker drawn from the element's text, on a picture from [data-drift-pics]
      data-drift="stack"    direct children nudged sideways by a seeded amount (a sticker staircase)
      data-drift="marquee"  its first child scrolls forever, cloned so the loop never shows a gap
+     data-drift="logo"     the DRIFT® wordmark drawn inline in the element's text colour (its text stays for screen readers)
      data-drift="menu-toggle" / data-drift-menu, data-drift-city-set / data-city: menu and Brisbane/Perth selector
 
    Webflow runs no custom code in the Designer canvas: test on the published (staging) site. */
 (() => {
   if (window.DRIFT && window.DRIFT.version) return;
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const NS = 'http://www.w3.org/2000/svg';
   const AX = { wght: [400, 900], wdth: [23, 252] };
   const CAP = 1467 / 2048, DESC = 434 / 2048, XH = 1062 / 2048, SPACE = 200 / 2048;
@@ -41,6 +42,7 @@
   const BASE = SCRIPT && SCRIPT.src ? SCRIPT.src.replace(/[^/]*$/, '') : '';
   const METRICS_URL = (SCRIPT && SCRIPT.dataset.metrics) || BASE + 'driftsans-metrics.json';
   const FAMILY = (SCRIPT && SCRIPT.dataset.family) || 'Drift Sans';
+  const LOGO_URL = (SCRIPT && SCRIPT.dataset.logo) || BASE + 'assets/drift-logo-ink.svg';
   const STILL = matchMedia('(prefers-reduced-motion: reduce)');
 
   /* ---- one seed per page view; ?seed=123 replays it ---- */
@@ -65,6 +67,8 @@
 [data-drift="sticker"]>svg.drift-sticker{display:block;max-width:100%;height:auto}
 [data-drift="stack"]>*{width:fit-content;max-width:100%}
 [data-drift="marquee"]{overflow:hidden}
+[data-drift="logo"]{line-height:0}
+[data-drift="logo"]>svg.drift-logo{display:block;width:100%;height:auto}
 [data-drift="marquee"]>.drift-track{display:flex;width:max-content;flex-wrap:nowrap}
 [data-drift="marquee"].drift-run>.drift-track{animation:drift-marquee var(--drift-dur,30s) linear infinite}
 @keyframes drift-marquee{to{transform:translateX(-50%)}}
@@ -445,7 +449,9 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   }
   function mixRender(el, st) {
     if (!st.text) return false;
-    const W = availW(el), s0 = cssSize(el), mode = el.getAttribute('data-drift-fit') || 'shrink';
+    const W = availW(el), s0 = cssSize(el), par = el.parentElement;
+    let mode = el.getAttribute('data-drift-fit') || 'shrink';
+    if (mode !== 'none' && par && /^inline/.test(getComputedStyle(par).display)) mode = 'none';
     let size = s0;
     if (mode === 'fill' && W > 4) size = W / st.run.ink;
     else if (mode === 'shrink' && W > 4) size = Math.min(s0, W / st.run.ink);
@@ -489,6 +495,8 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   }
 
   /* ---- the menu and the Brisbane/Perth selector ---- */
+  // Webflow turns a <button> into a link with no href, which the keyboard cannot reach: give it a button's role and tab stop
+  const asButton = (b) => { if (b.tagName === 'BUTTON' || (b.tagName === 'A' && b.hasAttribute('href'))) return; b.setAttribute('role', 'button'); if (!b.hasAttribute('tabindex')) b.tabIndex = 0; };
   function wireMenu() {
     const menu = document.querySelector('[data-drift-menu]'), toggles = [...document.querySelectorAll('[data-drift="menu-toggle"]')];
     if (!menu || !toggles.length) return;
@@ -500,7 +508,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
       if (open) { last = document.activeElement; const f = menu.querySelector('a,button,[tabindex]'); if (f) f.focus({ preventScroll: true }); refit(); }
       else if (last && last.focus) last.focus({ preventScroll: true });
     };
-    toggles.forEach((t) => { t.setAttribute('aria-expanded', 'false'); if (!/^(A|BUTTON)$/.test(t.tagName)) { t.setAttribute('role', 'button'); t.tabIndex = 0; }
+    toggles.forEach((t) => { t.setAttribute('aria-expanded', 'false'); asButton(t);
       t.addEventListener('click', (e) => { e.preventDefault(); set(!menu.classList.contains('is-open')); });
       t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); set(!menu.classList.contains('is-open')); } }); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && menu.classList.contains('is-open')) set(false); });
@@ -518,15 +526,29 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   function wireCity() {
     let c = ''; try { c = localStorage.getItem(CITY_KEY) || ''; } catch (e) {}
     document.querySelectorAll('[data-drift-city-set]').forEach((b) => {
-      if (!/^(A|BUTTON)$/.test(b.tagName)) { b.setAttribute('role', 'button'); b.tabIndex = 0; }
+      asButton(b);
       const go = (e) => { e.preventDefault(); const v = (b.getAttribute('data-drift-city-set') || '').toLowerCase(); setCity(document.documentElement.getAttribute('data-drift-city') === v && b.hasAttribute('data-drift-city-toggle') ? '' : v); };
       b.addEventListener('click', go); b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); });
     });
     setCity(c);
   }
 
+  /* ---- the DRIFT® wordmark, inline, in currentColor (the Figma vector: D, Я, I, F, T, ®) ---- */
+  let LOGO = null;
+  const logoReady = () => LOGO || (LOGO = fetch(LOGO_URL).then((r) => r.text()).then((t) => ({
+    vb: (t.match(/viewBox="([^"]+)"/) || [])[1] || '0 0 999.969 95.1139', paths: [...t.matchAll(/\sd="([^"]+)"/g)].map((m) => m[1]) }))
+    .catch((e) => { warn('logo not loaded', e); return null; }));
+  async function logoInit(el, st) {
+    const L = await logoReady(); if (!L || !L.paths.length) return;
+    st.sr = el.querySelector(':scope > .drift-sr');
+    if (!st.sr) { const sr = document.createElement('span'); sr.className = 'drift-sr'; while (el.firstChild) sr.appendChild(el.firstChild); if (!sr.textContent.trim()) sr.textContent = 'DRIFT®'; el.appendChild(sr); st.sr = sr; }
+    const old = el.querySelector(':scope > svg.drift-logo'); if (old) old.remove();
+    el.insertAdjacentHTML('afterbegin', `<svg class="drift-logo" viewBox="${esc(L.vb)}" fill="currentColor" aria-hidden="true" focusable="false">${L.paths.map((d) => `<path d="${esc(d)}"/>`).join('')}</svg>`);
+  }
+
   /* ---- orchestration: init once (the rolls), render on every resize (no re-roll) ---- */
   const KINDS = {
+    logo: { init: logoInit, render: () => true, order: 0 },
     poster: { init: posterInit, render: posterRender, order: 1 },
     fit: { init: fitInit, render: fitRender, order: 2 },
     mix: { init: mixInit, render: mixRender, order: 3 },

@@ -4,7 +4,7 @@
 Motion, and bumper stickers from his DRIFT Sticker (Studio BRIKD, reused with his OK). One random seed per page view
 drives every roll. Text stays real HTML; stickers are SVG drawn beside their text.
 
-Files: `drift-engine.js`, `driftsans-metrics.json` (Ryan's side-bearing table; must sit beside the script).
+Files: `drift-engine.js`, `driftsans-metrics.json` (Ryan's side-bearing table) and `assets/` (the wordmark), all beside each other.
 
 ## Install (Webflow site settings › Custom code)
 
@@ -44,6 +44,7 @@ script tag: `data-family="…"`. Webflow runs no custom code in the Designer: ch
 | `data-drift-pics` | a hidden Div or Collection List | Every `img` inside is the sticker picture pool |
 | `data-drift="stack"` | a Div of stickers | Each child nudged sideways by a seeded share of the room |
 | `data-drift="marquee"` | a Div whose first child holds the items | Scrolls forever with no gap. `data-drift-speed` px/s (default 60) |
+| `data-drift="logo"` | a Div with the text DRIFT® | The wordmark, drawn inline in the element's text colour and at its width (`assets/drift-logo-ink.svg`) |
 | `data-drift-wght`, `data-drift-wdth` | fit, mix, sticker, poster line | Ranges to roll in, e.g. `500-900` |
 | `data-drift-key` | any hook | A fixed name for its roll, so editing its text doesn't change its look |
 | `data-drift="menu-toggle"`, `data-drift-menu` | button, menu panel | Opens and closes the menu (Escape closes; the panel is a fixed overlay only on the live site) |
