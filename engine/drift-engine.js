@@ -1,4 +1,4 @@
-/* DRIFT engine for the Webflow site, v0.2.0 (Faust Earth for Untitled Group, Oct 2026).
+/* DRIFT engine for the Webflow site, v0.3.0 (Faust Earth for Untitled Group, Oct 2026).
 
    A port of Studio BRIKD's DRIFT tools by Ryan Ausden, reused with his OK:
    - DRIFT TYPE MOTION (lab.js): the master table, cut-aware tracking, the height deal, the sacred margin, wdthFor.
@@ -23,7 +23,7 @@
    Webflow runs no custom code in the Designer canvas: test on the published (staging) site. */
 (() => {
   if (window.DRIFT && window.DRIFT.version) return;
-  const VERSION = '0.2.0';
+  const VERSION = '0.3.0';
   const NS = 'http://www.w3.org/2000/svg';
   const AX = { wght: [400, 900], wdth: [23, 252] };
   const CAP = 1467 / 2048, DESC = 434 / 2048, XH = 1062 / 2048, SPACE = 200 / 2048;
@@ -396,28 +396,44 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     return `<svg class="drift-sticker" xmlns="${NS}" viewBox="0 0 ${W} ${H}" aria-hidden="true" focusable="false">${ground}${type}</svg>`;
   }
 
-  /* ---- the picture pool: every img inside [data-drift-pics] (a hidden CMS list) ---- */
+  /* ---- the picture pool: every img inside [data-drift-pics] (a hidden CMS list). Only the pictures a sticker picks
+     are downloaded, at the srcset size nearest PIC_W (Webflow makes 500/800/1080/1600/2000 px copies of CMS images) ---- */
+  const PIC_W = 1080;
   let POOL = null;
-  function poolReady() {
+  const pics = new Map();
+  function pickSrc(im) {
+    const src = im.getAttribute('src'), set = im.getAttribute('srcset'); if (!set) return src;
+    const c = set.split(',').map((s) => s.trim().split(/\s+/)).filter(([u, d]) => u && /^\d+(\.\d+)?w$/.test(d || '')).map(([u, d]) => ({ u, w: parseFloat(d) }));
+    if (!c.length) return src;
+    c.sort((a, b) => a.w - b.w);
+    return (c.find((x) => x.w >= PIC_W) || c[c.length - 1]).u;
+  }
+  function poolList() {
     if (POOL) return POOL;
-    const imgs = [...document.querySelectorAll('[data-drift-pics] img')], seen = new Set();
-    POOL = Promise.all(imgs.map((im) => {
-      const url = im.getAttribute('src'); if (!url || seen.has(url)) return null; seen.add(url);
-      return new Promise((res) => { const p = new Image(); p.onload = () => res({ key: url, url, w: p.naturalWidth, h: p.naturalHeight }); p.onerror = () => res(null); p.src = url; });
-    })).then((a) => a.filter((x) => x && x.w && x.h));
+    const seen = new Set(); POOL = [];
+    document.querySelectorAll('[data-drift-pics] img').forEach((im) => {
+      const key = im.getAttribute('src'); if (!key || seen.has(key)) return; seen.add(key);
+      POOL.push({ key, url: pickSrc(im) || key });
+    });
     return POOL;
   }
+  const loadPic = (p) => {
+    if (!pics.has(p.key)) pics.set(p.key, new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth && im.naturalHeight ? { ...p, w: im.naturalWidth, h: im.naturalHeight } : null); im.onerror = () => res(null); im.src = p.url; }));
+    return pics.get(p.key);
+  };
   const placed = [];   // the stickers drawn so far, for the least-used colour and picture
   async function stickerInit(el, st) {
+    // everything before the first await runs at once, in page order, so the least-used choices replay with the seed
     const R = RULES();
     R.flat = num(el.getAttribute('data-drift-flat'), R.flat);
     R.wdth = range(el.getAttribute('data-drift-wdth'), R.wdth); R.wght = range(el.getAttribute('data-drift-wght'), R.wght);
     st.R = R; st.text = textOf(el);
-    const pool = await poolReady();
+    const pool = poolList();
     const r = rngFor('sticker|' + st.key);
     st.sticker = makeSticker(st.text, R, pool, placed, r, { ground: el.getAttribute('data-drift-ground'), flatColour: el.getAttribute('data-drift-flat-colour') });
     placed.push(st.sticker);
-    st.pic = st.sticker.img ? pool.find((p) => p.key === st.sticker.img) : null;
+    const entry = st.sticker.img ? pool.find((p) => p.key === st.sticker.img) : null;
+    st.pic = entry ? await loadPic(entry) : null;
     st.sr = el.querySelector(':scope > .drift-sr');
     if (!st.sr) { const sr = document.createElement('span'); sr.className = 'drift-sr'; while (el.firstChild) sr.appendChild(el.firstChild); el.appendChild(sr); st.sr = sr; }
     st.L = stickerLayout(st.sticker, R);
@@ -574,13 +590,18 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     const seen = new Map();
     els.sort((a, b) => KINDS[a.getAttribute('data-drift')].order - KINDS[b.getAttribute('data-drift')].order);
     let n = STATE.size;
-    for (const el of els) {
+    // kinds go in their order (a marquee clones what the others drew); within a kind every init starts in page order,
+    // its rolls made before its first await, and the downloads (sticker pictures, the logo) run side by side
+    const start = (el) => {
       const kind = el.getAttribute('data-drift'), base = el.getAttribute('data-drift-key') || kind + '|' + textOf(el).slice(0, 80);
       const k = seen.get(base) || 0; seen.set(base, k + 1);
       const st = { kind, key: base + '#' + k, n: n++ };
-      try { await KINDS[kind].init(el, st); STATE.set(el, st); } catch (e) { warn('init failed', el, e); el.classList.add('drift-ready'); }
+      let job; try { job = Promise.resolve(KINDS[kind].init(el, st)); } catch (e) { job = Promise.reject(e); }
       if (ro) { ro.observe(el); if (el.parentElement) ro.observe(el.parentElement); }
-    }
+      return job.then(() => { STATE.set(el, st); }, (e) => { warn('init failed', el, e); el.classList.add('drift-ready'); });
+    };
+    const orders = [...new Set(els.map((el) => KINDS[el.getAttribute('data-drift')].order))];
+    for (const o of orders) await Promise.all(els.filter((el) => KINDS[el.getAttribute('data-drift')].order === o).map(start));
     renderAll();
   }
   function reroll(seed) {

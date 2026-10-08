@@ -41,7 +41,7 @@ script tag: `data-family="…"`. Webflow runs no custom code in the Designer: ch
 | `data-drift="mix"` | a heading | One line, each word its own weight and width (the sticker roll). `data-drift-fit`: `shrink` (default, never bigger than the CSS size), `fill`, `none` |
 | `data-drift="sticker"` | a heading or text | A bumper sticker drawn from the text. Type size = the CSS font-size (220 px is Ryan's 1×). Pictures come from any `[data-drift-pics]` list on the page |
 | `data-drift-ground="flat"` | sticker | A flat colour ground instead of a picture |
-| `data-drift-pics` | a hidden Div or Collection List | Every `img` inside is the sticker picture pool |
+| `data-drift-pics` | a hidden Div or Collection List | Every `img` inside is the sticker picture pool. Only the pictures the stickers pick are downloaded, at the `srcset` copy nearest 1080 px |
 | `data-drift="stack"` | a Div of stickers | Each child nudged sideways by a seeded share of the room |
 | `data-drift="marquee"` | a Div whose first child holds the items | Scrolls forever with no gap. `data-drift-speed` px/s (default 60) |
 | `data-drift="logo"` | a Div with the text DRIFT® | The wordmark, drawn inline in the element's text colour and at its width (`assets/drift-logo-ink.svg`) |
