@@ -1,4 +1,4 @@
-/* DRIFT engine for the Webflow site, v0.3.1 (Faust Earth for Untitled Group, Oct 2026).
+/* DRIFT engine for the Webflow site, v0.4.0 (Faust Earth for Untitled Group, Oct 2026).
 
    A port of Studio BRIKD's DRIFT tools by Ryan Ausden, reused with his OK:
    - DRIFT TYPE MOTION (lab.js): the master table, cut-aware tracking, the height deal, the sacred margin, wdthFor.
@@ -23,7 +23,7 @@
    Webflow runs no custom code in the Designer canvas: test on the published (staging) site. */
 (() => {
   if (window.DRIFT && window.DRIFT.version) return;
-  const VERSION = '0.3.1';
+  const VERSION = '0.4.0';
   const NS = 'http://www.w3.org/2000/svg';
   const AX = { wght: [400, 900], wdth: [23, 252] };
   const CAP = 1467 / 2048, DESC = 434 / 2048, XH = 1062 / 2048, SPACE = 200 / 2048;
@@ -33,7 +33,13 @@
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const seg = (arr, v) => { let i = 0; while (i < arr.length - 2 && v > arr[i + 1]) i++; return [i, clamp((v - arr[i]) / (arr[i + 1] - arr[i]), 0, 1)]; };
   const wordsOf = (text) => String(text || '').trim().split(/\s+/).filter(Boolean);
-  const textOf = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+  // the text of a hook; an element made only of child elements (two bound CMS fields, say) reads them with a space between
+  const textOf = (el) => {
+    const kids = [...el.children].filter((c) => !c.classList.contains('drift-sr') && c.tagName !== 'svg');
+    const loose = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+    const t = !loose && kids.length > 1 && !el.querySelector(':scope > .drift-sr') ? kids.map((c) => c.textContent).join(' ') : el.textContent;
+    return (t || '').replace(/\s+/g, ' ').trim();
+  };
   const num = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
   const range = (v, d) => { if (!v) return d; const m = String(v).split(/[-–,\s]+/).map(Number).filter(Number.isFinite); return m.length === 2 ? [Math.min(m[0], m[1]), Math.max(m[0], m[1])] : m.length === 1 ? [m[0], m[0]] : d; };
   const warn = (...a) => console.warn('[drift]', ...a);
@@ -52,6 +58,45 @@
   const hash32 = (s) => { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
   const mulberry = (a) => () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const rngFor = (key) => mulberry((SEED ^ hash32(key)) >>> 0);
+
+  /* ---- motion: one clock for everything that moves (lab.js: every motion a pure function of time since its start) ----
+     A moving hook starts the first frame it is on screen after the reveal (the bookend's fade, or boot). Nothing moves
+     with prefers-reduced-motion: every hook is drawn at rest. */
+  const BEAT = 60 / num(SCRIPT && SCRIPT.dataset.bpm, 140);   // lab.js: 140 bpm
+  const zOf = (I) => clamp(0.95 - 0.8 * 0.69 * (I == null ? 1 : I), 0.12, 0.95);   // Ryan's bounce 0.69
+  // a damped spring's step response u seconds after its kick (lab.js spring)
+  function spring(u, w, z) {
+    if (u <= 0) return 0;
+    if (z >= 0.999) return 1 - Math.exp(-w * u) * (1 + w * u);
+    const wd = w * Math.sqrt(1 - z * z);
+    return 1 - Math.exp(-z * w * u) * (Math.cos(wd * u) + (z * w / wd) * Math.sin(wd * u));
+  }
+  let REVEAL_AT = 0, raf = 0, startedThisFrame = 0;
+  const MOV = new Map();   // element -> frame function (returns false when it has finished moving)
+  const still = () => STILL.matches;
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => es.forEach((e) => { e.target._driftInView = e.isIntersecting; if (e.isIntersecting) kick(); }), { rootMargin: '80px' }) : null;
+  // seconds since this hook started moving; null at rest (reduced motion), −1 before it has started
+  function clockOf(el, st, now) {
+    if (still()) return null;
+    now = now || performance.now();
+    if (st.t0 == null) {
+      if (now < REVEAL_AT || el._driftInView === false || (io && el._driftInView == null)) return -1;
+      st.t0 = now + 90 * startedThisFrame++;   // hooks that come on screen together start a beat-let apart
+    }
+    return (now - st.t0) / 1000;
+  }
+  function moving(el, fn) { if (still() || MOV.has(el)) return; MOV.set(el, fn); if (io) io.observe(el); kick(); }
+  function kick() { if (!raf && MOV.size) raf = requestAnimationFrame(tick); }
+  function tick(now) {
+    raf = 0; startedThisFrame = 0;
+    for (const [el, fn] of MOV) {
+      if (!el.isConnected) { MOV.delete(el); continue; }
+      if (el._driftInView === false) continue;
+      let go = true; try { go = fn(now); } catch (e) { warn('motion failed', el, e); go = false; }
+      if (go === false) MOV.delete(el);
+    }
+    if (MOV.size) kick();
+  }
 
   /* ---- the engine's own CSS ---- */
   const CSS = `
@@ -74,6 +119,16 @@
 @keyframes drift-marquee{to{transform:translateX(-50%)}}
 @media (prefers-reduced-motion:reduce){[data-drift="marquee"].drift-run>.drift-track{animation:none}}
 html.drift-js [data-drift-menu]:not(.is-open){display:none}
+[data-drift="sticker"]>svg.drift-sticker{transform-origin:0 50%}
+[data-drift="mosaic"]{position:relative}
+[data-drift="mosaic"]>canvas.drift-mosaic{position:absolute;pointer-events:none}
+html.drift-js [data-drift-bookend]{position:fixed;inset:0;z-index:1000;transition:opacity .7s ease}
+html.drift-js [data-drift-bookend].is-leaving{opacity:0;pointer-events:none}
+html.drift-bookend-seen [data-drift-bookend],html.drift-failsafe [data-drift-bookend],html:not(.drift-js) [data-drift-city-gate]{display:none}
+html.drift-js[data-drift-city] [data-drift-city-gate]{display:none}
+html.drift-js:not([data-drift-city]) [data-drift-city-gate]{position:fixed;inset:0;z-index:950;overflow:auto}
+html.drift-js:not([data-drift-city]):has([data-drift-city-gate]){overflow:hidden}
+@media (prefers-reduced-motion:reduce){[data-drift-bookend]{display:none}}
 html.drift-js [data-drift-menu].is-open{position:fixed;inset:0;z-index:900;overflow:auto}
 html.drift-menu-open{overflow:hidden}
 html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="perth"] [data-city="brisbane" i]{display:none!important}
@@ -122,11 +177,11 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
 
   /* ================= TYPE MOTION (lab.js), the rest view ================= */
   const ROLE = {   // lab.js ROLE, plus the weight range each line is rolled in per visit (Ryan's rest weight inside it)
-    city:  { pref: 1.00, wght: 400, track: -0.06, roll: [400, 650] },
-    name:  { pref: 0.95, wght: 400, track: -0.06, roll: [400, 650] },
-    date:  { pref: 0.42, wght: 900, track: 0,     roll: [750, 900] },
-    month: { pref: 0.42, wght: 600, track: -0.16, roll: [500, 800] },
-    venue: { pref: 0.40, wght: 400, track: -0.06, roll: [400, 600] },
+    city:  { pref: 1.00, wght: 400, track: -0.06, hit: 820, roll: [400, 650] },
+    name:  { pref: 0.95, wght: 400, track: -0.06, hit: 820, roll: [400, 650] },
+    date:  { pref: 0.42, wght: 900, track: 0,     hit: 900, roll: [750, 900] },
+    month: { pref: 0.42, wght: 600, track: -0.16, hit: 860, roll: [500, 800] },
+    venue: { pref: 0.40, wght: 400, track: -0.06, hit: 820, roll: [400, 600] },
   };
   const TIGHTEN = 0.01;
   function fuseAt(g, d) {
@@ -209,10 +264,34 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
       if (role === 'logo') return { el: c, logo: true };
       const R = ROLE[role] || ROLE.city, text = textOf(c), r = rngFor('poster|' + st.key + '|' + k + '|' + text);
       const wr = range(c.getAttribute('data-drift-wght'), R.roll);
-      return { el: c, role, text, row: { text, track: num(c.getAttribute('data-drift-track'), R.track) }, pref: num(c.getAttribute('data-drift-pref'), R.pref), wght: clamp(lerp(wr[0], wr[1], r()), AX.wght[0], AX.wght[1]) };
+      const wght = clamp(lerp(wr[0], wr[1], r()), AX.wght[0], AX.wght[1]);
+      return { el: c, role, text, row: { text, track: num(c.getAttribute('data-drift-track'), R.track) }, pref: num(c.getAttribute('data-drift-pref'), R.pref), wght, hit: Math.max(wght, R.hit) };
+    });
+    const mo = el.getAttribute('data-drift-motion') || '';
+    st.loop = /\bloop\b/.test(mo); st.unfold = st.loop || /\bunfold\b/.test(mo);
+    st.I = clamp(num(el.getAttribute('data-drift-intensity'), 1), 0, 1.5);
+    if (st.unfold) st.lines.forEach((l) => { l.el.style.transformOrigin = '0 0'; });
+  }
+  // Type Motion's loop (lab.js stateOf, L.loop): the spotlight passes down the lines a beat at a time; the lit line's share
+  // swells (grow) and it goes bold (hit), on a spring. In: each line unfolds from its left ink edge, in reading order.
+  const GROW = 2, BOLD = 1, HIT_W = 13, UNFOLD_W = 30, LINE_GAP = 0.12;
+  function posterMotion(st, t) {
+    const n = st.lines.filter((l) => !l.logo && l.text).length, z = zOf(st.I), tHits = 0.08 + n * LINE_GAP + 0.3;
+    let i = 0;
+    return st.lines.map((l) => {
+      if (l.logo || !l.text) return { e: 0, k: 1 };
+      const tin = 0.08 + i * LINE_GAP, k = t == null ? 1 : t < tin ? 0 : Math.min(1, spring(t - tin, UNFOLD_W, z));
+      let e = 0;
+      if (st.loop && t != null && t > tHits) {
+        const u = t - tHits, K = Math.floor(u / BEAT);
+        for (let b = Math.max(0, K - 5); b <= K; b++) if (b % n === i) e += spring(u - b * BEAT, HIT_W, z) - spring(u - b * BEAT - BEAT, HIT_W, z);
+      }
+      i++;
+      return { e: Math.max(-0.35, e), k };
     });
   }
-  function posterRender(el, st) {
+  function posterRender(el, st, now) {
+    const t = st.unfold ? clockOf(el, st, now) : null, mv = st.unfold ? posterMotion(st, t) : null;
     const p = padOf(el), cw = el.clientWidth, W = cw - p.l - p.r;
     if (W < 20) return false;
     let ch = el.clientHeight;
@@ -221,15 +300,16 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     const A0 = ch - p.t - p.b;
     if (A0 < 20) { warn('a poster needs a height (CSS height, aspect-ratio or data-drift-aspect)', el); return false; }
     const gapAttr = el.getAttribute('data-drift-gap'), gap = gapAttr == null ? W * 0.0185 : /%$/.test(gapAttr) ? W * num(gapAttr, 1.85) / 100 : num(gapAttr, 0);
-    const items = st.lines.filter((l) => l.logo || l.text).map((l) => {
+    const items = st.lines.map((l, j) => [l, mv ? mv[j] : { e: 0, k: 1 }]).filter(([l]) => l.logo || l.text).map(([l, m]) => {
       if (l.logo) {
         const sv = l.el.querySelector('svg'), vb = sv && sv.viewBox && sv.viewBox.baseVal;
         const aspL = num(l.el.getAttribute('data-drift-aspect'), vb && vb.width ? vb.width / vb.height : 999.969 / 95.1139);
-        return { l, fixed: true, h: W / aspL };
+        return { l, fixed: true, h: W / aspL, k: m.k };
       }
-      const bk = boxK(l.row), hmax = Math.min(A0, bk * 100 * W / ink100(l.row, l.wght, AX.wdth[0]));
-      const hmin = Math.min(hmax, bk * 100 * W / ink100(l.row, l.wght, AX.wdth[1]));
-      return { l, bk, hmax, hmin, want: l.pref };
+      const e = clamp(m.e, 0, 1.4), g = clamp(lerp(l.wght, l.hit, clamp(BOLD * st.I * e, 0, 1)), AX.wght[0], AX.wght[1]);
+      const bk = boxK(l.row), hmax = Math.min(A0, bk * 100 * W / ink100(l.row, g, AX.wdth[0]));
+      const hmin = Math.min(hmax, bk * 100 * W / ink100(l.row, g, AX.wdth[1]));
+      return { l, g, bk, hmax, hmin, k: m.k, want: l.pref * Math.max(0.05, 1 + GROW * (st.I || 1) * m.e) };
     });
     if (!items.length) return false;
     const gaps = gap * (items.length - 1), fixedH = items.filter((it) => it.fixed).reduce((s, it) => s + it.h, 0);
@@ -242,7 +322,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     for (let k = 0; k < 40; k++) { const mid = (lo + hi) / 2; if (sumAt(mid) < room) lo = mid; else hi = mid; }
     text.forEach((it) => { it.h = Math.max(0, hOf(it, lo)); });
     // the sacred margin: the end lines keep their real ink (overshoots, descenders) inside the frame
-    const over = (it, key) => (it && !it.fixed ? vInk(it.l.row, it.l.wght)[key] * it.h / it.bk / 100 : 0);
+    const over = (it, key) => (it && !it.fixed ? vInk(it.l.row, it.g)[key] * it.h / it.bk / 100 : 0);
     let inTop = over(items[0], 'up'), inBot = over(items[items.length - 1], 'down');
     const roomS = A0 - inTop - inBot - gaps - fixedH, sum = text.reduce((s, it) => s + it.h, 0);
     if (sum > roomS && sum > 0) { const k = Math.max(0, roomS) / sum; text.forEach((it) => { it.h *= k; }); inTop = over(items[0], 'up'); inBot = over(items[items.length - 1], 'down'); }
@@ -255,14 +335,16 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
       const s = it.l.el.style;
       if (it.fixed) {
         Object.assign(s, { left: p.l + 'px', top: (p.t + y).toFixed(2) + 'px', width: W.toFixed(2) + 'px', height: it.h.toFixed(2) + 'px' });
+        if (mv) s.transform = it.k < 0.9999 ? `scaleX(${it.k.toFixed(4)})` : '';
       } else {
-        const size = it.h / it.bk, row = it.l.row, g = it.l.wght, d = wdthFor(row, g, 100 * W / size);
+        const size = it.h / it.bk, row = it.l.row, g = it.g, d = wdthFor(row, g, 100 * W / size);
         const inkW = ink100(row, g, d) * size / 100, lsb = sb(row.text[0], g, d)[1] * size / upm();
         // the line's box is its cap height (plus descender room): baseline at (bk − LHN)/2 + ASC, moved to CAP below the box top
         Object.assign(s, styleRow(row, g, d, size), { lineHeight: it.bk.toFixed(4), left: (p.l + (W - inkW) / 2 - lsb).toFixed(2) + 'px',
           top: (p.t + y + (CAP - ((it.bk - LHN) / 2 + ASC)) * size).toFixed(2) + 'px' });
         it.l.el.dataset.driftY = (p.t + y).toFixed(2); it.l.el.dataset.driftSize = size.toFixed(3);
         it.l.el.dataset.driftCut = `${g.toFixed(0)}/${d.toFixed(1)}`;
+        if (mv) { s.transformOrigin = `${lsb.toFixed(2)}px 0`; s.transform = it.k < 0.9999 ? `scaleX(${it.k.toFixed(4)})` : ''; }
       }
       y += it.h;
     });
@@ -417,8 +499,9 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     });
     return POOL;
   }
+  const READY = [];   // pictures already downloaded: a re-rolling sticker or a mosaic glitch only ever uses these
   const loadPic = (p) => {
-    if (!pics.has(p.key)) pics.set(p.key, new Promise((res) => { const im = new Image(); im.onload = () => res(im.naturalWidth && im.naturalHeight ? { ...p, w: im.naturalWidth, h: im.naturalHeight } : null); im.onerror = () => res(null); im.src = p.url; }));
+    if (!pics.has(p.key)) pics.set(p.key, new Promise((res) => { const im = new Image(); im.onload = () => { const q = im.naturalWidth && im.naturalHeight ? { ...p, w: im.naturalWidth, h: im.naturalHeight, im } : null; if (q) READY.push(q); res(q); }; im.onerror = () => res(null); im.src = p.url; }));
     return pics.get(p.key);
   };
   const placed = [];   // the stickers drawn so far, for the least-used colour and picture
@@ -430,7 +513,10 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     st.R = R; st.text = textOf(el);
     const pool = poolList();
     const r = rngFor('sticker|' + st.key);
-    st.sticker = makeSticker(st.text, R, pool, placed, r, { ground: el.getAttribute('data-drift-ground'), flatColour: el.getAttribute('data-drift-flat-colour') });
+    st.opt = { ground: el.getAttribute('data-drift-ground'), flatColour: el.getAttribute('data-drift-flat-colour') };
+    st.sticker = makeSticker(st.text, R, pool, placed, r, st.opt);
+    const mo = el.getAttribute('data-drift-motion') || 'unfold';
+    st.unfold = /\bunfold\b/.test(mo); st.cycle = num(el.getAttribute('data-drift-cycle'), 0);
     placed.push(st.sticker);
     const entry = st.sticker.img ? pool.find((p) => p.key === st.sticker.img) : null;
     st.pic = entry ? await loadPic(entry) : null;
@@ -446,8 +532,100 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     const scale = cssSize(el) / st.R.size, W = availW(el);
     const w = Math.min(st.L.W * scale, W || st.L.W * scale);
     st.svg.style.width = w.toFixed(1) + 'px';
+    if (!still() && (st.unfold || st.cycle > 0)) { if (st.unfold && st.t0 == null) st.svg.style.transform = 'scaleX(0)'; moving(el, (now) => stickerFrame(el, st, now)); }
     return true;
   }
+  // spawn: the sticker unfolds from its left edge (lab.js unfoldK); cycle: a new roll every N beats, as on the artist tiles
+  function stickerFrame(el, st, now) {
+    const t = clockOf(el, st, now); if (t == null) return false;
+    if (t < 0) return true;
+    let busy = false;
+    if (st.unfold && !st.unfolded) {
+      const k = Math.min(1, spring(t, UNFOLD_W, zOf(1)));
+      st.svg.style.transform = k < 0.9995 ? `scaleX(${k.toFixed(4)})` : '';
+      if (t > 1) { st.unfolded = true; st.svg.style.transform = ''; } else busy = true;
+    }
+    if (st.cycle > 0) {
+      const tick = Math.floor((t - 0.8) / (st.cycle * BEAT));
+      if (tick >= 1 && tick !== st.tick) { st.tick = tick; stickerReroll(el, st, tick); }
+      return true;
+    }
+    return busy;
+  }
+  function stickerReroll(el, st, tick) {
+    const others = placed.filter((q) => q !== st.sticker), ready = READY.slice();
+    const opt = ready.length ? st.opt : { ...st.opt, ground: 'flat' };
+    const s2 = makeSticker(st.text, st.R, ready, others, rngFor('sticker|' + st.key + '|' + tick), opt);
+    const at = placed.indexOf(st.sticker); if (at >= 0) placed[at] = s2; else placed.push(s2);
+    st.sticker = s2; st.pic = s2.img ? ready.find((q) => q.key === s2.img) : null;
+    st.L = stickerLayout(s2, st.R);
+    const box = document.createElement('div'); box.innerHTML = stickerSVG(s2, st.L, st.pic);
+    const sv = box.firstElementChild; st.svg.replaceWith(sv); st.svg = sv;
+    el.dataset.driftCut = s2.words.map((w) => `${w.g.toFixed(0)}/${w.d.toFixed(0)}`).join(' ');
+    stickerRender(el, st);
+    if (el.parentElement && STATE.has(el.parentElement)) { const ps = STATE.get(el.parentElement); if (ps.kind === 'stack') stackRender(el.parentElement, ps); }
+  }
+
+  /* ---- mosaic: a photo that resolves out of big pixels, tile by tile, then glitches on the beat (the artist tiles) ----
+     The <img> stays for layout and alt text; a canvas is laid over it. A second <img> inside is the glitch picture,
+     otherwise one the stickers have already downloaded. */
+  async function mosaicInit(el, st) {
+    st.img = el.querySelector('img'); st.alt = el.querySelectorAll('img')[1] || null;
+    if (!st.img || still()) return;
+    if (!st.img.complete) await new Promise((r) => { st.img.addEventListener('load', r, { once: true }); st.img.addEventListener('error', r, { once: true }); setTimeout(r, 6000); });
+    if (!st.img.naturalWidth) return;
+    st.cv = document.createElement('canvas'); st.cv.className = 'drift-mosaic'; st.cv.setAttribute('aria-hidden', 'true');
+    el.appendChild(st.cv); st.r = rngFor('mosaic|' + st.key);
+  }
+  function coverRect(nw, nh, W, H) { const s = Math.max(W / nw, H / nh), sw = W / s, sh = H / s; return [(nw - sw) / 2, (nh - sh) / 2, sw, sh]; }
+  function mosaicRender(el, st) {
+    if (!st.cv) return true;
+    const im = st.img, W = im.offsetWidth, H = im.offsetHeight; if (W < 8 || H < 8) return false;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    Object.assign(st.cv.style, { left: im.offsetLeft + 'px', top: im.offsetTop + 'px', width: W + 'px', height: H + 'px' });
+    if (st.W !== W || st.H !== H) {
+      st.W = W; st.H = H; st.cv.width = Math.round(W * dpr); st.cv.height = Math.round(H * dpr);
+      const cols = Math.max(5, Math.round(W / clamp(W / 11, 26, 64))), rows = Math.max(3, Math.round(H / (W / cols)));
+      st.cols = cols; st.rows = rows; st.sig = null;
+      const r = rngFor('mosaic|' + st.key + '|grid'); st.rv = Array.from({ length: cols * rows }, () => 0.06 + 0.5 * r());
+      const sm = document.createElement('canvas'); sm.width = cols; sm.height = rows;
+      const sc = sm.getContext('2d'); sc.drawImage(im, ...coverRect(im.naturalWidth, im.naturalHeight, cols, rows), 0, 0, cols, rows); st.small = sm;
+    }
+    st.sig = null; mosaicDraw(st, clockOf(el, st));
+    moving(el, (now) => mosaicFrame(el, st, now));
+    return true;
+  }
+  // which tiles glitch on beat b: one to three blocks of tiles, seeded, on about two beats in three
+  function glitchSet(st, b) {
+    const r = rngFor('mosaic|' + st.key + '|' + b), set = new Map();
+    if (r() > 0.66) return set;
+    const blocks = 1 + Math.floor(r() * 3), useAlt = r() < 0.7;
+    for (let q = 0; q < blocks; q++) {
+      const w = 1 + Math.floor(r() * 4), h = 1 + Math.floor(r() * 3), x0 = Math.floor(r() * st.cols), y0 = Math.floor(r() * st.rows);
+      for (let y = y0; y < Math.min(st.rows, y0 + h); y++) for (let x = x0; x < Math.min(st.cols, x0 + w); x++) set.set(y * st.cols + x, useAlt ? 'alt' : 'px');
+    }
+    return set;
+  }
+  function mosaicDraw(st, t) {
+    const cv = st.cv, c = cv.getContext('2d'), W = cv.width, H = cv.height, im = st.img, tw = W / st.cols, th = H / st.rows;
+    const n = st.cols * st.rows, pre = t == null ? false : t < 0;
+    const revealed = t == null ? n : pre ? 0 : st.rv.filter((v) => v <= t).length;
+    const b = t != null && t > 0.9 ? Math.floor((t - 0.9) / BEAT) : -1;
+    const sig = revealed + '|' + b; if (sig === st.sig) return; st.sig = sig;
+    c.imageSmoothingEnabled = true;
+    c.drawImage(im, ...coverRect(im.naturalWidth, im.naturalHeight, W, H), 0, 0, W, H);
+    const pixel = (i) => { const x = i % st.cols, y = Math.floor(i / st.cols); c.imageSmoothingEnabled = false; c.drawImage(st.small, x, y, 1, 1, Math.floor(x * tw), Math.floor(y * th), Math.ceil(tw) + 1, Math.ceil(th) + 1); };
+    if (revealed < n) { for (let i = 0; i < n; i++) if (pre || st.rv[i] > t) pixel(i); return; }
+    if (b < 0) return;
+    const alt = st.alt && st.alt.naturalWidth ? st.alt : (READY.length ? READY[Math.floor(rngFor('mosaic-alt|' + st.key + '|' + b)() * READY.length)].im : null);
+    for (const [i, how] of glitchSet(st, b)) {
+      if (how === 'alt' && alt) {
+        const x = i % st.cols, y = Math.floor(i / st.cols), [sx, sy, sw, sh] = coverRect(alt.naturalWidth, alt.naturalHeight, W, H), k = sw / W;
+        c.imageSmoothingEnabled = true; c.drawImage(alt, sx + x * tw * k, sy + y * th * k, tw * k, th * k, Math.floor(x * tw), Math.floor(y * th), Math.ceil(tw) + 1, Math.ceil(th) + 1);
+      } else pixel(i);
+    }
+  }
+  function mosaicFrame(el, st, now) { const t = clockOf(el, st, now); if (t == null) { st.cv.remove(); st.cv = null; return false; } mosaicDraw(st, t); return true; }
 
   /* ---- mix: one line of words, each with its own cut (the sticker roll), as HTML ---- */
   function mixInit(el, st) {
@@ -543,7 +721,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     let c = ''; try { c = localStorage.getItem(CITY_KEY) || ''; } catch (e) {}
     document.querySelectorAll('[data-drift-city-set]').forEach((b) => {
       asButton(b);
-      const go = (e) => { e.preventDefault(); const v = (b.getAttribute('data-drift-city-set') || '').toLowerCase(); setCity(document.documentElement.getAttribute('data-drift-city') === v && b.hasAttribute('data-drift-city-toggle') ? '' : v); };
+      const go = (e) => { e.preventDefault(); const v = (b.getAttribute('data-drift-city-set') || '').toLowerCase(); setCity(document.documentElement.getAttribute('data-drift-city') === v && b.hasAttribute('data-drift-city-toggle') && !document.querySelector('[data-drift-city-gate]') ? '' : v); };
       b.addEventListener('click', go); b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(e); });
     });
     setCity(c);
@@ -560,6 +738,58 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     if (!st.sr) { const sr = document.createElement('span'); sr.className = 'drift-sr'; while (el.firstChild) sr.appendChild(el.firstChild); if (!sr.textContent.trim()) sr.textContent = 'DRIFT®'; el.appendChild(sr); st.sr = sr; }
     const old = el.querySelector(':scope > svg.drift-logo'); if (old) old.remove();
     el.insertAdjacentHTML('afterbegin', `<svg class="drift-logo" viewBox="${esc(L.vb)}" fill="currentColor" aria-hidden="true" focusable="false">${L.paths.map((d) => `<path d="${esc(d)}"/>`).join('')}</svg>`);
+    st.unfold = /\bunfold\b/.test(el.getAttribute('data-drift-motion') || '');
+    if (st.unfold && !still()) { el.querySelectorAll('svg.drift-logo path').forEach((q) => q.setAttribute('transform', 'scale(0 1)')); moving(el, (now) => logoFrame(el, st, now)); }
+  }
+  // the letters unfold D → ®, each from its own left edge, 80 ms apart (lab.js seriesLogo: logoGap 0.08, spring 30)
+  function logoFrame(el, st, now) {
+    const t = clockOf(el, st, now), ps = [...el.querySelectorAll('svg.drift-logo path')];
+    if (t == null) { ps.forEach((q) => q.removeAttribute('transform')); return false; }
+    if (t < 0) return true;
+    if (!st.gx) { const vb = el.querySelector('svg.drift-logo').viewBox.baseVal; st.vbw = vb.width; st.gx = ps.map((q) => { try { const b = q.getBBox(); return [b.x, b.width]; } catch (e) { return [0, 1]; } }); }
+    const z = zOf(1); let done = true;
+    ps.forEach((q, j) => {
+      const a = j * 0.08, [x, w] = st.gx[j], k = Math.min(spring(t - a, UNFOLD_W, z), (st.vbw - x) / Math.max(1, w));
+      if (t - a < 1) done = false;
+      q.setAttribute('transform', `translate(${x.toFixed(2)} 0) scale(${Math.max(0, k).toFixed(4)} 1) translate(${(-x).toFixed(2)} 0)`);
+    });
+    if (done) ps.forEach((q) => q.removeAttribute('transform'));
+    return !done;
+  }
+
+  /* ---- the bookend: a pink screen, the mark unfolds, holds, and the page fades in under it — once a visit ---- */
+  async function bookend() {
+    const bk = document.querySelector('[data-drift-bookend]'); if (!bk) return;
+    const h = document.documentElement;
+    if (still() || h.classList.contains('drift-bookend-seen')) { bk.remove(); return; }
+    try { sessionStorage.setItem('drift-bookend', '1'); } catch (e) {}
+    REVEAL_AT = Infinity;
+    let gone = false;
+    const leave = () => { if (gone) return; gone = true; REVEAL_AT = performance.now(); bk.classList.add('is-leaving'); kick(); setTimeout(() => bk.remove(), 750); };
+    bk.addEventListener('click', leave); addEventListener('keydown', leave, { once: true });
+    setTimeout(leave, 2300);   // never longer than this, however slow the logo
+    const lg = bk.querySelector('[data-drift="logo"]');
+    if (lg) {
+      const st = { kind: 'logo', key: 'bookend', n: -1, t0: performance.now() };
+      await logoInit(lg, st); STATE.set(lg, st); lg.classList.add('drift-ready');
+      st.t0 = performance.now(); kick();
+    }
+    setTimeout(leave, 1250);
+  }
+
+  /* ---- the city gate: the first visit picks Brisbane or Perth; the pages then show that city only ---- */
+  function wireGate() {
+    const g = document.querySelector('[data-drift-city-gate]'); if (!g) return;
+    g.setAttribute('role', 'dialog'); g.setAttribute('aria-modal', 'true');
+    if (!g.hasAttribute('aria-label')) g.setAttribute('aria-label', 'Choose your city');
+    const focusIn = () => { if (!document.documentElement.hasAttribute('data-drift-city')) { const b = g.querySelector('[data-drift-city-set]'); if (b) b.focus({ preventScroll: true }); } };
+    g.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      const f = [...g.querySelectorAll('a[href],button,[tabindex]')].filter((x) => x.offsetParent); if (!f.length) return;
+      const i = f.indexOf(document.activeElement);
+      if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && i === f.length - 1) { e.preventDefault(); f[0].focus(); }
+    });
+    setTimeout(focusIn, 50);
   }
 
   /* ---- orchestration: init once (the rolls), render on every resize (no re-roll) ---- */
@@ -569,6 +799,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     fit: { init: fitInit, render: fitRender, order: 2 },
     mix: { init: mixInit, render: mixRender, order: 3 },
     sticker: { init: stickerInit, render: stickerRender, order: 4 },
+    mosaic: { init: mosaicInit, render: mosaicRender, order: 4 },
     stack: { init: stackInit, render: stackRender, order: 5 },
     marquee: { init: marqueeInit, render: marqueeRender, order: 6 },
   };
@@ -581,6 +812,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
       if (!el.isConnected) { STATE.delete(el); continue; }
       let ok = false; try { ok = KINDS[st.kind].render(el, st); } catch (e) { warn('render failed', el, e); }
       if (ok !== false) el.classList.add('drift-ready');
+      if (ok !== false && st.kind === 'poster' && st.unfold) moving(el, (now) => { const r = posterRender(el, st, now); return st.loop || r === false || st.t0 == null || (now - st.t0) / 1000 < 0.08 + st.lines.length * LINE_GAP + 1.2; });
     }
     document.dispatchEvent(new CustomEvent('drift:rendered'));
   }
@@ -588,7 +820,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   async function initAll(root) {
     // a data-drift value that draws nothing (menu-toggle, or a typo) is shown at once rather than held hidden
     root.querySelectorAll('[data-drift]').forEach((el) => { if (!KINDS[el.getAttribute('data-drift')]) el.classList.add('drift-ready'); });
-    const els = [...root.querySelectorAll('[data-drift]')].filter((el) => KINDS[el.getAttribute('data-drift')] && !STATE.has(el));
+    const els = [...root.querySelectorAll('[data-drift]')].filter((el) => KINDS[el.getAttribute('data-drift')] && !STATE.has(el) && !el.closest('[data-drift-bookend]'));
     const seen = new Map();
     els.sort((a, b) => KINDS[a.getAttribute('data-drift')].order - KINDS[b.getAttribute('data-drift')].order);
     let n = STATE.size;
@@ -625,7 +857,10 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   ]);
   async function boot() {
     injectCSS();
-    wireMenu(); wireCity();
+    REVEAL_AT = performance.now();
+    wireMenu(); wireCity(); wireGate();
+    bookend();
+    if (STILL.addEventListener) STILL.addEventListener('change', () => { MOV.clear(); refit(); });
     await Promise.all([fontsReady(), metricsReady]);
     if (document.fonts && !document.fonts.check(`400 100px '${FAMILY}'`)) warn(`font '${FAMILY}' is not loaded; fitting may be off`);
     measureBaseline(); tables.clear();
@@ -641,7 +876,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     document.documentElement.classList.add('drift-booted');
   }
 
-  const api = window.DRIFT = { version: VERSION, seed: SEED, reroll, refit, setCity, init: initAll,
+  const api = window.DRIFT = { version: VERSION, seed: SEED, reroll, refit, setCity, init: initAll, beat: BEAT,
     _m: { ink100, wdthFor, sb, advance, table, ROLE, RULES, stickerLayout, wordRun, rollWords, trackAt, get ASC() { return ASC; }, get MET() { return MET; } } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
