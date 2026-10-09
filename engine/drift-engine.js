@@ -1,4 +1,4 @@
-/* DRIFT engine for the Webflow site, v0.4.1 (Faust Earth for Untitled Group, Oct 2026).
+/* DRIFT engine for the Webflow site, v0.4.2 (Faust Earth for Untitled Group, Oct 2026).
 
    A port of Studio BRIKD's DRIFT tools by Ryan Ausden, reused with his OK:
    - DRIFT TYPE MOTION (lab.js): the master table, cut-aware tracking, the height deal, the sacred margin, wdthFor.
@@ -23,7 +23,7 @@
    Webflow runs no custom code in the Designer canvas: test on the published (staging) site. */
 (() => {
   if (window.DRIFT && window.DRIFT.version) return;
-  const VERSION = '0.4.1';
+  const VERSION = '0.4.2';
   const NS = 'http://www.w3.org/2000/svg';
   const AX = { wght: [400, 900], wdth: [23, 252] };
   const CAP = 1467 / 2048, DESC = 434 / 2048, XH = 1062 / 2048, SPACE = 200 / 2048;
@@ -274,7 +274,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   }
   // Type Motion's loop (lab.js stateOf, L.loop): the spotlight passes down the lines a beat at a time; the lit line's share
   // swells (grow) and it goes bold (hit), on a spring. In: each line unfolds from its left ink edge, in reading order.
-  const GROW = 2, BOLD = 1, HIT_W = 13, UNFOLD_W = 30, LINE_GAP = 0.12;
+  const BOLD = 1, HIT_W = 13, UNFOLD_W = 30, LINE_GAP = 0.12;
   function posterMotion(st, t) {
     const n = st.lines.filter((l) => !l.logo && l.text).length, z = zOf(st.I), tHits = 0.08 + n * LINE_GAP + 0.3;
     let i = 0;
@@ -306,10 +306,12 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
         const aspL = num(l.el.getAttribute('data-drift-aspect'), vb && vb.width ? vb.width / vb.height : 999.969 / 95.1139);
         return { l, fixed: true, h: W / aspL, k: m.k };
       }
-      const e = clamp(m.e, 0, 1.4), g = clamp(lerp(l.wght, l.hit, clamp(BOLD * st.I * e, 0, 1)), AX.wght[0], AX.wght[1]);
+      // the height deal uses the rest weight, so every line keeps one height while it moves (as on the artist tiles);
+      // the spotlight only pushes the weight toward bold, and the width axis takes it up
+      const e = clamp(m.e, 0, 1.4), g = l.wght, gHit = clamp(lerp(l.wght, l.hit, clamp(BOLD * st.I * e, 0, 1)), AX.wght[0], AX.wght[1]);
       const bk = boxK(l.row), hmax = Math.min(A0, bk * 100 * W / ink100(l.row, g, AX.wdth[0]));
       const hmin = Math.min(hmax, bk * 100 * W / ink100(l.row, g, AX.wdth[1]));
-      return { l, g, bk, hmax, hmin, k: m.k, want: l.pref * Math.max(0.05, 1 + GROW * (st.I || 1) * m.e) };
+      return { l, g, gHit, bk, hmax, hmin, k: m.k, want: l.pref };
     });
     if (!items.length) return false;
     const gaps = gap * (items.length - 1), fixedH = items.filter((it) => it.fixed).reduce((s, it) => s + it.h, 0);
@@ -337,7 +339,11 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
         Object.assign(s, { left: p.l + 'px', top: (p.t + y).toFixed(2) + 'px', width: W.toFixed(2) + 'px', height: it.h.toFixed(2) + 'px' });
         if (mv) s.transform = it.k < 0.9999 ? `scaleX(${it.k.toFixed(4)})` : '';
       } else {
-        const size = it.h / it.bk, row = it.l.row, g = it.g, d = wdthFor(row, g, 100 * W / size);
+        const size = it.h / it.bk, row = it.l.row, want100 = 100 * W / size;
+        // as bold as the spotlight asks, but never so bold the line cannot be condensed to the column at this height
+        let g = it.gHit;
+        if (g > it.g && ink100(row, g, AX.wdth[0]) > want100) { let a = it.g, b = g; for (let q = 0; q < 18; q++) { const mid = (a + b) / 2; if (ink100(row, mid, AX.wdth[0]) > want100) b = mid; else a = mid; } g = a; }
+        const d = wdthFor(row, g, want100);
         const inkW = ink100(row, g, d) * size / 100, lsb = sb(row.text[0], g, d)[1] * size / upm();
         // the line's box is its cap height (plus descender room): baseline at (bk − LHN)/2 + ASC, moved to CAP below the box top
         Object.assign(s, styleRow(row, g, d, size), { lineHeight: it.bk.toFixed(4), left: (p.l + (W - inkW) / 2 - lsb).toFixed(2) + 'px',
@@ -529,9 +535,12 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   }
   function stickerRender(el, st) {
     if (!st.svg) return false;
+    // the scale is set by the first roll (its CSS size, shrunk if that roll is wider than the room) and kept for every
+    // re-roll, so a sticker's height never changes; re-rolls that would not fit at that height are skipped
     const scale = cssSize(el) / st.R.size, W = availW(el);
-    const w = Math.min(st.L.W * scale, W || st.L.W * scale);
-    st.svg.style.width = w.toFixed(1) + 'px';
+    st.L0W = st.L0W || st.L.W;
+    st.s = W > 4 ? Math.min(scale, W / st.L0W) : scale;
+    Object.assign(st.svg.style, { width: (st.L.W * st.s).toFixed(1) + 'px', height: (st.L.H * st.s).toFixed(1) + 'px', maxWidth: 'none' });
     if (!still() && (st.unfold || st.cycle > 0)) { if (st.unfold && st.t0 == null) st.svg.style.transform = 'scaleX(0)'; moving(el, (now) => stickerFrame(el, st, now)); }
     return true;
   }
@@ -555,7 +564,12 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   function stickerReroll(el, st, tick) {
     const others = placed.filter((q) => q !== st.sticker), ready = READY.slice();
     const opt = ready.length ? st.opt : { ...st.opt, ground: 'flat' };
-    const s2 = makeSticker(st.text, st.R, ready, others, rngFor('sticker|' + st.key + '|' + tick), opt);
+    const W = availW(el); let s2 = null;
+    for (let tr = 0; tr < 8 && !s2; tr++) {
+      const c = makeSticker(st.text, st.R, ready, others, rngFor('sticker|' + st.key + '|' + tick + (tr ? '|' + tr : '')), opt);
+      if (!(W > 4) || stickerLayout(c, st.R).W * st.s <= W + 0.5) s2 = c;
+    }
+    if (!s2) return;
     const at = placed.indexOf(st.sticker); if (at >= 0) placed[at] = s2; else placed.push(s2);
     st.sticker = s2; st.pic = s2.img ? ready.find((q) => q.key === s2.img) : null;
     st.L = stickerLayout(s2, st.R);
