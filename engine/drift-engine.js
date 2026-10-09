@@ -1,4 +1,4 @@
-/* DRIFT engine for the Webflow site, v0.4.0 (Faust Earth for Untitled Group, Oct 2026).
+/* DRIFT engine for the Webflow site, v0.4.1 (Faust Earth for Untitled Group, Oct 2026).
 
    A port of Studio BRIKD's DRIFT tools by Ryan Ausden, reused with his OK:
    - DRIFT TYPE MOTION (lab.js): the master table, cut-aware tracking, the height deal, the sacred margin, wdthFor.
@@ -23,7 +23,7 @@
    Webflow runs no custom code in the Designer canvas: test on the published (staging) site. */
 (() => {
   if (window.DRIFT && window.DRIFT.version) return;
-  const VERSION = '0.4.0';
+  const VERSION = '0.4.1';
   const NS = 'http://www.w3.org/2000/svg';
   const AX = { wght: [400, 900], wdth: [23, 252] };
   const CAP = 1467 / 2048, DESC = 434 / 2048, XH = 1062 / 2048, SPACE = 200 / 2048;
@@ -71,9 +71,9 @@
     const wd = w * Math.sqrt(1 - z * z);
     return 1 - Math.exp(-z * w * u) * (Math.cos(wd * u) + (z * w / wd) * Math.sin(wd * u));
   }
-  let REVEAL_AT = 0, raf = 0, startedThisFrame = 0;
+  let REVEAL_AT = 0, raf = 0, startedThisFrame = 0, FRAMES = 0, STARVED = false;
   const MOV = new Map();   // element -> frame function (returns false when it has finished moving)
-  const still = () => STILL.matches;
+  const still = () => STILL.matches || STARVED;   // STARVED: the browser runs no animation frames (a hidden tab or webview)
   const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => es.forEach((e) => { e.target._driftInView = e.isIntersecting; if (e.isIntersecting) kick(); }), { rootMargin: '80px' }) : null;
   // seconds since this hook started moving; null at rest (reduced motion), −1 before it has started
   function clockOf(el, st, now) {
@@ -88,7 +88,7 @@
   function moving(el, fn) { if (still() || MOV.has(el)) return; MOV.set(el, fn); if (io) io.observe(el); kick(); }
   function kick() { if (!raf && MOV.size) raf = requestAnimationFrame(tick); }
   function tick(now) {
-    raf = 0; startedThisFrame = 0;
+    raf = 0; startedThisFrame = 0; FRAMES++;
     for (const [el, fn] of MOV) {
       if (!el.isConnected) { MOV.delete(el); continue; }
       if (el._driftInView === false) continue;
@@ -537,7 +537,7 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
   }
   // spawn: the sticker unfolds from its left edge (lab.js unfoldK); cycle: a new roll every N beats, as on the artist tiles
   function stickerFrame(el, st, now) {
-    const t = clockOf(el, st, now); if (t == null) return false;
+    const t = clockOf(el, st, now); if (t == null) { if (st.svg) st.svg.style.transform = ''; return false; }
     if (t < 0) return true;
     let busy = false;
     if (st.unfold && !st.unfolded) {
@@ -874,6 +874,8 @@ html[data-drift-city="brisbane"] [data-city="perth" i],html[data-drift-city="per
     } else addEventListener('resize', refit);
     await initAll(document);
     document.documentElement.classList.add('drift-booted');
+    // if no animation frame has run 2.5 s after boot, nothing would ever unfold: draw everything at rest instead
+    setTimeout(() => { if (FRAMES || !MOV.size) return; STARVED = true; const now = performance.now(); for (const [el, fn] of [...MOV]) { try { fn(now); } catch (e) {} MOV.delete(el); } const bk = document.querySelector('[data-drift-bookend]'); if (bk) bk.remove(); }, 2500);
   }
 
   const api = window.DRIFT = { version: VERSION, seed: SEED, reroll, refit, setCity, init: initAll, beat: BEAT,
